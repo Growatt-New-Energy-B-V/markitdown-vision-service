@@ -1,5 +1,26 @@
+from dataclasses import dataclass, field
 from typing import Any, BinaryIO, Optional
 from ._stream_info import StreamInfo
+
+
+@dataclass
+class ExtractedImage:
+    """An image extracted from a document."""
+
+    image_id: str  # Unique identifier, e.g., "p1-i1" (page 1, image 1)
+    data: bytes  # Raw image data
+    format: str  # Image format: "jpeg", "png", etc.
+    page: Optional[int] = None  # Page number (1-indexed) if applicable
+    index: Optional[int] = None  # Image index within page
+    width: Optional[int] = None
+    height: Optional[int] = None
+    context_before: str = ""  # Text context before the image
+    context_after: str = ""  # Text context after the image
+
+    @property
+    def filename(self) -> str:
+        """Get suggested filename for this image."""
+        return f"{self.image_id}.{self.format}"
 
 
 class DocumentConverterResult:
@@ -10,19 +31,22 @@ class DocumentConverterResult:
         markdown: str,
         *,
         title: Optional[str] = None,
+        images: Optional[list[ExtractedImage]] = None,
     ):
         """
         Initialize the DocumentConverterResult.
 
         The only required parameter is the converted Markdown text.
-        The title, and any other metadata that may be added in the future, are optional.
+        The title, images, and any other metadata that may be added in the future, are optional.
 
         Parameters:
         - markdown: The converted Markdown text.
         - title: Optional title of the document.
+        - images: Optional list of extracted images.
         """
         self.markdown = markdown
         self.title = title
+        self.images = images or []
 
     @property
     def text_content(self) -> str:
