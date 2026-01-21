@@ -10,10 +10,77 @@ import json
 import os
 import sys
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from pathlib import Path
 
 import httpx
+
+
+# Global storage for received webhooks
+received_webhooks: list[dict] = []
+webhook_server: HTTPServer | None = None
+webhook_server_thread: threading.Thread | None = None
+
+
+class WebhookHandler(BaseHTTPRequestHandler):
+    """Simple HTTP handler to receive webhook notifications."""
+
+    def log_message(self, format, *args):
+        """Suppress default logging."""
+        pass
+
+    def do_POST(self):
+        """Handle incoming webhook POST requests."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+
+        try:
+            data = json.loads(body.decode("utf-8"))
+            received_webhooks.append({
+                "timestamp": datetime.now().isoformat(),
+                "path": self.path,
+                "data": data,
+            })
+            log(f"  [Webhook] Received: task={data.get('task_id', 'unknown')[:12]}... status={data.get('status', 'unknown')}")
+        except json.JSONDecodeError:
+            log(f"  [Webhook] Received non-JSON body: {body[:100]}")
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"received": true}')
+
+
+def start_webhook_server(port: int) -> str:
+    """Start a local webhook server and return the URL."""
+    global webhook_server, webhook_server_thread
+
+    webhook_server = HTTPServer(("0.0.0.0", port), WebhookHandler)
+
+    def serve():
+        webhook_server.serve_forever()
+
+    webhook_server_thread = threading.Thread(target=serve, daemon=True)
+    webhook_server_thread.start()
+
+    # Return the URL that Docker containers can use to reach this server
+    # host.docker.internal works on Docker Desktop; for Linux, use the host IP
+    webhook_url = f"http://host.docker.internal:{port}/webhook"
+    log(f"Webhook server started on port {port}")
+    log(f"Webhook URL for Docker: {webhook_url}")
+
+    return webhook_url
+
+
+def stop_webhook_server():
+    """Stop the webhook server."""
+    global webhook_server
+    if webhook_server:
+        webhook_server.shutdown()
+        webhook_server = None
+        log("Webhook server stopped")
 
 
 def log(msg: str):
@@ -42,14 +109,21 @@ def upload_pdf(
     base_url: str,
     pdf_path: Path,
     describe_images: bool = True,
+    webhook_url: str | None = None,
 ) -> dict:
     """Upload a PDF and return task info."""
     log(f"Uploading: {pdf_path.name} ({pdf_path.stat().st_size / 1024 / 1024:.2f} MB)")
+
+    # Build form data
+    data = {}
+    if webhook_url:
+        data["webhook_url"] = webhook_url
 
     with open(pdf_path, "rb") as f:
         resp = client.post(
             f"{base_url}/tasks",
             params={"describe_images": str(describe_images).lower()},
+            data=data,
             files={"file": (pdf_path.name, f, "application/pdf")},
             timeout=60,
         )
@@ -124,6 +198,7 @@ def test_pdf(
     output_dir: Path,
     describe_images: bool = True,
     timeout: int = 300,
+    webhook_url: str | None = None,
 ) -> dict:
     """Test a single PDF file end-to-end."""
     result = {
@@ -131,6 +206,7 @@ def test_pdf(
         "pdf_name": pdf_path.name,
         "pdf_size_bytes": pdf_path.stat().st_size,
         "describe_images": describe_images,
+        "webhook_url": webhook_url,
         "success": False,
         "error": None,
         "task_id": None,
@@ -145,7 +221,7 @@ def test_pdf(
 
     try:
         # Upload
-        task_info = upload_pdf(client, base_url, pdf_path, describe_images)
+        task_info = upload_pdf(client, base_url, pdf_path, describe_images, webhook_url)
         result["task_id"] = task_info["task_id"]
 
         # Poll for completion
@@ -212,6 +288,12 @@ def main():
         default=300,
         help="Timeout per PDF in seconds (default: 300)",
     )
+    parser.add_argument(
+        "--webhook-port",
+        type=int,
+        default=8081,
+        help="Port for webhook server (0 to disable webhook testing)",
+    )
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -227,30 +309,48 @@ def main():
     log(f"Found {len(pdf_files)} PDF files to test")
     log(f"Output directory: {output_dir}")
     log(f"Image descriptions: {'disabled' if args.no_describe else 'enabled'}")
+    log(f"Webhook testing: {'port ' + str(args.webhook_port) if args.webhook_port else 'disabled'}")
     log("")
+
+    # Start webhook server if requested
+    webhook_url = None
+    if args.webhook_port:
+        try:
+            webhook_url = start_webhook_server(args.webhook_port)
+        except Exception as e:
+            log(f"WARNING: Failed to start webhook server: {e}")
+            log("Continuing without webhook testing...")
+        log("")
 
     # Wait for service
     if not wait_for_service(args.base_url):
         log("ERROR: Service not available")
+        stop_webhook_server()
         sys.exit(1)
 
     log("")
 
     # Test each PDF
     results = []
-    with httpx.Client() as client:
-        for i, pdf_path in enumerate(pdf_files, 1):
-            log(f"[{i}/{len(pdf_files)}] Testing {pdf_path.name}")
-            result = test_pdf(
-                client,
-                args.base_url,
-                pdf_path,
-                output_dir,
-                describe_images=not args.no_describe,
-                timeout=args.timeout,
-            )
-            results.append(result)
-            log("")
+    try:
+        with httpx.Client() as client:
+            for i, pdf_path in enumerate(pdf_files, 1):
+                log(f"[{i}/{len(pdf_files)}] Testing {pdf_path.name}")
+                result = test_pdf(
+                    client,
+                    args.base_url,
+                    pdf_path,
+                    output_dir,
+                    describe_images=not args.no_describe,
+                    timeout=args.timeout,
+                    webhook_url=webhook_url,
+                )
+                results.append(result)
+                log("")
+    finally:
+        # Stop webhook server
+        if args.webhook_port:
+            stop_webhook_server()
 
     # Summary
     log("=" * 60)
@@ -275,10 +375,37 @@ def main():
         for r in failed:
             log(f"  - {r['pdf_name']}: {r['error']}")
 
+    # Webhook summary
+    if webhook_url:
+        log("")
+        log(f"Webhooks received: {len(received_webhooks)}")
+        if received_webhooks:
+            for wh in received_webhooks:
+                task_id = wh["data"].get("task_id", "unknown")[:12]
+                status = wh["data"].get("status", "unknown")
+                log(f"  - Task {task_id}...: {status}")
+
+            # Check for missing webhooks
+            expected_tasks = {r["task_id"] for r in results if r["task_id"]}
+            received_tasks = {wh["data"].get("task_id") for wh in received_webhooks}
+            missing = expected_tasks - received_tasks
+            if missing:
+                log(f"  WARNING: Missing webhooks for {len(missing)} tasks")
+
     # Save results JSON
     results_file = output_dir / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    output_data = {
+        "results": results,
+        "webhooks": received_webhooks if webhook_url else [],
+        "summary": {
+            "total": len(results),
+            "passed": len(successful),
+            "failed": len(failed),
+            "webhooks_received": len(received_webhooks) if webhook_url else None,
+        },
+    }
     with open(results_file, "w") as f:
-        json.dump(results, f, indent=2, default=str)
+        json.dump(output_data, f, indent=2, default=str)
     log("")
     log(f"Results saved to: {results_file}")
 
