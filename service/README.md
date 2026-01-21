@@ -37,6 +37,9 @@ Environment variables:
 - `OPENAI_API_TOKEN` - OpenAI API key for image descriptions
 - `DATA_DIR` - Data storage directory (default: `/data`)
 - `MAX_UPLOAD_SIZE` - Maximum upload size in bytes (default: 500MB)
+- `MAX_CONCURRENT_DESCRIPTIONS` - Max parallel OpenAI API calls for image descriptions (default: 5)
+- `DESCRIPTION_MAX_RETRIES` - Retry attempts for failed image descriptions (default: 3)
+- `DESCRIPTION_RETRY_DELAY` - Base delay in seconds for exponential backoff (default: 1.0)
 
 ## Running
 

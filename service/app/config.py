@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # Worker settings
     max_concurrent_tasks: int = 2
 
+    # Image description settings
+    max_concurrent_descriptions: int = 5  # Max parallel OpenAI API calls
+    description_max_retries: int = 3
+    description_retry_delay: float = 1.0  # Base delay in seconds (exponential backoff)
+
     # Webhook settings
     webhook_timeout: float = 10.0
     webhook_max_retries: int = 3
