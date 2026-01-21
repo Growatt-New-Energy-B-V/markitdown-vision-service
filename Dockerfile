@@ -3,31 +3,39 @@ FROM python:3.13-slim-bullseye
 ENV DEBIAN_FRONTEND=noninteractive
 ENV EXIFTOOL_PATH=/usr/bin/exiftool
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
+ENV PYTHONUNBUFFERED=1
 
-# Runtime dependency
+# Runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    exiftool
-
-ARG INSTALL_GIT=false
-RUN if [ "$INSTALL_GIT" = "true" ]; then \
-    apt-get install -y --no-install-recommends \
-    git; \
-    fi
-
-# Cleanup
-RUN rm -rf /var/lib/apt/lists/*
+    exiftool \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY . /app
-RUN pip --no-cache-dir install \
-    /app/packages/markitdown[all] \
-    /app/packages/markitdown-sample-plugin
 
-# Default USERID and GROUPID
-ARG USERID=nobody
-ARG GROUPID=nogroup
+# Copy and install the markitdown package first (for caching)
+COPY packages/markitdown /app/packages/markitdown
+RUN pip --no-cache-dir install /app/packages/markitdown[all]
 
-USER $USERID:$GROUPID
+# Copy and install the service with test dependencies
+COPY service /app/service
+RUN pip --no-cache-dir install "/app/service[test]"
 
-ENTRYPOINT [ "markitdown" ]
+# Copy test resources
+COPY .claude/resources /app/resources
+
+# Create data directory
+RUN mkdir -p /data/tasks && chmod 777 /data
+
+# Expose the service port
+EXPOSE 8000
+
+# Set environment defaults
+ENV DATA_DIR=/data
+ENV DB_PATH=/data/task_db.sqlite
+ENV HOST=0.0.0.0
+ENV PORT=8000
+ENV E2E_RESOURCES_DIR=/app/resources
+
+# Default command runs the service
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
