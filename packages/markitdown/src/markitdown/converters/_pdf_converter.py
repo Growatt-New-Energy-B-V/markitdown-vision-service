@@ -3,7 +3,7 @@ import io
 import re
 from typing import BinaryIO, Any
 
-from .._base_converter import DocumentConverter, DocumentConverterResult
+from .._base_converter import DocumentConverter, DocumentConverterResult, ExtractedImage
 from .._stream_info import StreamInfo
 from .._exceptions import MissingDependencyException, MISSING_DEPENDENCY_MESSAGE
 
@@ -445,6 +445,95 @@ def _extract_tables_from_words(page: Any) -> list[list[list[str]]]:
     return [table_rows]
 
 
+def _extract_images_from_page(
+    page: Any,
+    page_num: int,
+    page_text: str,
+    context_chars: int = 500,
+) -> list[ExtractedImage]:
+    """
+    Extract images from a PDF page using pdfplumber.
+
+    Args:
+        page: The pdfplumber page object
+        page_num: 1-indexed page number
+        page_text: Extracted text from the page for context
+        context_chars: Number of characters of context to extract around images
+
+    Returns:
+        List of ExtractedImage objects with the extracted image data
+    """
+    images: list[ExtractedImage] = []
+    page_images = page.images
+
+    image_index = 1
+    for img in page_images:
+        image_id = f"p{page_num}-i{image_index}"
+
+        try:
+            # Get image stream
+            img_obj = img.get("stream")
+            if img_obj is None:
+                continue
+
+            # Get raw image data
+            raw_data = img_obj.get_data()
+            if not raw_data:
+                continue
+
+            # Get image properties
+            width = int(img.get("width", 0))
+            height = int(img.get("height", 0))
+
+            if width == 0 or height == 0:
+                continue
+
+            # Determine image format from magic bytes
+            image_format = "png"  # default
+            if raw_data[:2] == b'\xff\xd8':
+                image_format = "jpeg"
+            elif raw_data[:8] == b'\x89PNG\r\n\x1a\n':
+                image_format = "png"
+
+            # Extract context from page text based on image vertical position
+            context_before = ""
+            context_after = ""
+            if page_text:
+                img_top = img.get("top", 0)
+                page_height = page.height or 1
+                text_position_ratio = img_top / page_height
+                text_len = len(page_text)
+                approx_pos = int(text_len * text_position_ratio)
+
+                # Get context before
+                start = max(0, approx_pos - context_chars)
+                context_before = page_text[start:approx_pos].strip()
+
+                # Get context after
+                end = min(text_len, approx_pos + context_chars)
+                context_after = page_text[approx_pos:end].strip()
+
+            images.append(ExtractedImage(
+                image_id=image_id,
+                data=raw_data,
+                format=image_format,
+                page=page_num,
+                index=image_index,
+                width=width,
+                height=height,
+                context_before=context_before,
+                context_after=context_after,
+            ))
+
+            image_index += 1
+
+        except Exception:
+            # Skip images that fail to extract
+            continue
+
+    return images
+
+
 class PdfConverter(DocumentConverter):
     """
     Converts PDFs to Markdown.
@@ -489,7 +578,12 @@ class PdfConverter(DocumentConverter):
 
         assert isinstance(file_stream, io.IOBase)
 
+        # Check if image extraction is requested
+        extract_images = kwargs.get("extract_images", False)
+        context_chars = kwargs.get("context_chars", 500)
+
         markdown_chunks: list[str] = []
+        all_images: list[ExtractedImage] = []
 
         # Read file stream into BytesIO for compatibility with pdfplumber
         pdf_bytes = io.BytesIO(file_stream.read())
@@ -498,9 +592,10 @@ class PdfConverter(DocumentConverter):
             # Track how many pages are form-style vs plain text
             form_pages = 0
             plain_pages = 0
+            page_texts: list[str] = []  # Store text per page for context extraction
 
             with pdfplumber.open(pdf_bytes) as pdf:
-                for page in pdf.pages:
+                for page_num, page in enumerate(pdf.pages, start=1):
                     # Try form-style word position extraction
                     page_content = _extract_form_content_from_words(page)
 
@@ -509,12 +604,24 @@ class PdfConverter(DocumentConverter):
                         plain_pages += 1
                         # Extract text using pdfplumber's basic extraction for this page
                         text = page.extract_text()
-                        if text and text.strip():
-                            markdown_chunks.append(text.strip())
+                        page_text = text.strip() if text else ""
+                        if page_text:
+                            markdown_chunks.append(page_text)
+                        page_texts.append(page_text)
                     else:
                         form_pages += 1
-                        if page_content.strip():
-                            markdown_chunks.append(page_content)
+                        page_text = page_content.strip()
+                        if page_text:
+                            markdown_chunks.append(page_text)
+                        page_texts.append(page_text)
+
+                    # Extract images from this page if requested
+                    if extract_images:
+                        page_images = _extract_images_from_page(
+                            page, page_num, page_texts[-1] if page_texts else "",
+                            context_chars
+                        )
+                        all_images.extend(page_images)
 
             # If most pages are plain text, use pdfminer for better text handling
             if plain_pages > form_pages and plain_pages > 0:
@@ -528,6 +635,7 @@ class PdfConverter(DocumentConverter):
             # Fallback if pdfplumber fails
             pdf_bytes.seek(0)
             markdown = pdfminer.high_level.extract_text(pdf_bytes)
+            all_images = []  # Cannot extract images with fallback
 
         # Fallback if still empty
         if not markdown:
@@ -537,4 +645,4 @@ class PdfConverter(DocumentConverter):
         # Post-process to merge MasterFormat-style partial numbering with following text
         markdown = _merge_partial_numbering_lines(markdown)
 
-        return DocumentConverterResult(markdown=markdown)
+        return DocumentConverterResult(markdown=markdown, images=all_images if extract_images else None)
