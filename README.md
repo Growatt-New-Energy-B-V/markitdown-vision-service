@@ -183,6 +183,75 @@ docker build -t markitdown:latest .
 docker run --rm -i markitdown:latest < ~/your-file.pdf > output.md
 ```
 
+### Image Extraction from PDFs
+
+MarkItDown supports extracting images from PDFs along with their surrounding text context:
+
+```python
+from markitdown import MarkItDown
+
+md = MarkItDown()
+result = md.convert("document.pdf", extract_images=True, context_chars=500)
+
+print(result.text_content)  # Markdown text
+
+# Access extracted images
+for image in result.images:
+    print(f"Image {image.image_id}: {image.width}x{image.height} ({image.format})")
+    print(f"  Context before: {image.context_before[:100]}...")
+    print(f"  Context after: {image.context_after[:100]}...")
+
+    # Save image to file
+    with open(image.filename, "wb") as f:
+        f.write(image.data)
+```
+
+### Vision Service (REST API)
+
+For production use cases, MarkItDown includes a Dockerized REST API service with async processing and LLM-powered image descriptions.
+
+**Quick Start:**
+
+```bash
+# Build the Docker image
+docker build -t markitdown-vision-service .
+
+# Run without image descriptions
+docker run -d -p 8000:8000 markitdown-vision-service
+
+# Run with OpenAI image descriptions
+docker run -d -p 8000:8000 -e OPENAI_API_TOKEN="sk-..." markitdown-vision-service
+```
+
+**API Usage:**
+
+```bash
+# Upload a PDF for conversion
+curl -X POST "http://localhost:8000/tasks?describe_images=true" \
+  -F "file=@document.pdf"
+# Returns: {"task_id": "01ABC123...", "status": "queued"}
+
+# Check task status
+curl "http://localhost:8000/tasks/01ABC123..."
+# Returns: {"task_id": "...", "status": "completed", "outputs": ["01ABC123.md", "images/p1-i1.png", ...]}
+
+# Download the markdown result
+curl "http://localhost:8000/tasks/01ABC123.../files/01ABC123....md" -o result.md
+
+# Download all outputs as zip
+curl "http://localhost:8000/tasks/01ABC123.../download.zip" -o outputs.zip
+```
+
+**Features:**
+- Async task processing via REST API
+- PDF conversion with automatic image extraction
+- Optional OpenAI GPT-4o-mini Vision descriptions with text context
+- Webhook notifications (`webhook_url` parameter)
+- 24-hour retention with automatic cleanup
+- Health check endpoint at `/health`
+
+See [service/README.md](service/README.md) for full documentation.
+
 ## Contributing
 
 This project welcomes contributions and suggestions. Most contributions require you to agree to a
