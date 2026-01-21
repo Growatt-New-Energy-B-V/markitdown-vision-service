@@ -240,6 +240,12 @@ curl "http://localhost:8000/tasks/01ABC123.../files/01ABC123....md" -o result.md
 
 # Download all outputs as zip
 curl "http://localhost:8000/tasks/01ABC123.../download.zip" -o outputs.zip
+
+# Cancel a queued/running task
+curl -X POST "http://localhost:8000/tasks/01ABC123.../cancel"
+
+# Delete a task and its files
+curl -X DELETE "http://localhost:8000/tasks/01ABC123..."
 ```
 
 **Features:**

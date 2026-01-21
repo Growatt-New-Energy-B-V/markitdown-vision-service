@@ -212,3 +212,51 @@ async def mark_task_expired(task_id: str) -> None:
     )
     await db.commit()
     logger.info(f"Task {task_id} marked as expired")
+
+
+async def cancel_task(task_id: str) -> Optional[Task]:
+    """
+    Cancel a task if it's in a cancellable state (queued or running).
+
+    Returns the updated task if cancelled, None if task not found.
+    Raises ValueError if task cannot be cancelled.
+    """
+    task = await get_task(task_id)
+    if not task:
+        return None
+
+    if task.status not in (TaskStatus.QUEUED, TaskStatus.RUNNING):
+        raise ValueError(
+            f"Task cannot be cancelled (status: {task.status.value})"
+        )
+
+    db = await get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    await db.execute(
+        """UPDATE tasks
+           SET status = ?, finished_at = ?
+           WHERE task_id = ?""",
+        (TaskStatus.CANCELLED.value, now, task_id)
+    )
+    await db.commit()
+    logger.info(f"Task {task_id} cancelled")
+
+    return await get_task(task_id)
+
+
+async def delete_task(task_id: str) -> bool:
+    """
+    Delete a task from the database.
+
+    Returns True if deleted, False if not found.
+    """
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM tasks WHERE task_id = ?",
+        (task_id,)
+    )
+    await db.commit()
+    deleted = cursor.rowcount > 0
+    if deleted:
+        logger.info(f"Task {task_id} deleted from database")
+    return deleted
