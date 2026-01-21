@@ -143,16 +143,13 @@ def poll_task(
 ) -> dict:
     """Poll task until completion or failure."""
     start = time.time()
-    last_status = None
 
     while time.time() - start < timeout:
         resp = client.get(f"{base_url}/tasks/{task_id}", timeout=10)
         data = resp.json()
         status = data["status"]
 
-        if status != last_status:
-            log(f"  Task {task_id[:12]}... status: {status}")
-            last_status = status
+        log(f"  Task {task_id[:12]}... status: {status}")
 
         if status in ("completed", "failed", "expired"):
             return data
