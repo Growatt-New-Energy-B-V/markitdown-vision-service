@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from ..config import get_settings
 from ..models import Task, TaskStatus, TaskCreateResponse, TaskStatusResponse
-from ..utils.database import create_task, get_task
+from ..utils.database import create_task, get_task, cancel_task, delete_task
 from ..workers.task_queue import enqueue_task
 
 logger = logging.getLogger(__name__)
@@ -238,3 +238,63 @@ async def download_task_zip(task_id: str):
             "Content-Disposition": f'attachment; filename="{task_id}.zip"'
         }
     )
+
+
+@router.post("/{task_id}/cancel", response_model=TaskStatusResponse)
+async def cancel_conversion_task(task_id: str):
+    """
+    Cancel a queued or running task.
+
+    Only tasks in 'queued' or 'running' status can be cancelled.
+    """
+    try:
+        task = await cancel_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        return TaskStatusResponse(
+            task_id=task.task_id,
+            status=task.status,
+            original_filename=task.original_filename,
+            size_bytes=task.size_bytes,
+            created_at=task.created_at,
+            started_at=task.started_at,
+            finished_at=task.finished_at,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{task_id}", status_code=204)
+async def delete_conversion_task(task_id: str):
+    """
+    Delete a task and all its associated files.
+
+    This permanently removes the task from the system.
+    """
+    settings = get_settings()
+
+    # Get task to check if it exists
+    task = await get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Don't allow deleting running tasks - must cancel first
+    if task.status == TaskStatus.RUNNING:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete a running task. Cancel it first."
+        )
+
+    # Delete task files
+    task_dir = Path(settings.data_dir) / "tasks" / task_id
+    if task_dir.exists():
+        import shutil
+        shutil.rmtree(task_dir)
+        logger.info(f"Deleted task directory: {task_dir}")
+
+    # Delete from database
+    await delete_task(task_id)
+
+    # Return 204 No Content
+    return None

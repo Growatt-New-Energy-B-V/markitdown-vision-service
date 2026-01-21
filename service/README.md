@@ -18,6 +18,12 @@ A Dockerized Python service that converts documents to Markdown with optional LL
 ### Get Task Status
 `GET /tasks/{task_id}` - Check task status
 
+### Cancel Task
+`POST /tasks/{task_id}/cancel` - Cancel a queued or running task
+
+### Delete Task
+`DELETE /tasks/{task_id}` - Delete a task and all its files
+
 ### Download Files
 `GET /tasks/{task_id}/files/{path}` - Download a specific output file
 `GET /tasks/{task_id}/download.zip` - Download all outputs as zip
