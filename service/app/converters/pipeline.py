@@ -47,14 +47,14 @@ async def convert_document(task: Task) -> list[str]:
     # If image description is requested and we have images
     if task.describe_images and image_refs:
         settings = get_settings()
-        if settings.openai_api_token:
+        if settings.OPENAI_API_KEY:
             markdown_content = await describe_images(
                 markdown_content, image_refs, images_dir
             )
         else:
             logger.warning(
                 f"Task {task.task_id} requested image descriptions but "
-                "OPENAI_API_TOKEN is not set"
+                "OPENAI_API_KEY is not set"
             )
 
     # Write the output markdown

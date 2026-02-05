@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     db_path: str = "/data/task_db.sqlite"
 
     # OpenAI API token (note the intentional typo from PDR)
-    openai_api_token: str = Field(default="", validation_alias="OPENAI_API_TOKEN")
+    OPENAI_API_KEY: str = Field(default="", validation_alias="OPENAI_API_KEY")
 
     # Worker settings
     max_concurrent_tasks: int = 2

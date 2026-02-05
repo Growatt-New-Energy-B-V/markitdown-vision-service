@@ -1,4 +1,5 @@
 """Tests for task endpoints."""
+
 import asyncio
 import os
 from pathlib import Path
@@ -143,8 +144,8 @@ class TestE2EWithResources:
     async def test_convert_pdf_with_image_descriptions(self, client, e2e_resources_dir):
         """Test PDF conversion with image descriptions enabled."""
         # Skip if no OpenAI token
-        if not os.environ.get("OPENAI_API_TOKEN"):
-            pytest.skip("OPENAI_API_TOKEN not set")
+        if not os.environ.get("OPENAI_API_KEY"):
+            pytest.skip("OPENAI_API_KEY not set")
 
         pdf_path = e2e_resources_dir / "image-doc.pdf"
         if not pdf_path.exists():
