@@ -15,7 +15,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from pathlib import Path
 
-import httpx
+import requests
 
 
 # Global storage for received webhooks
@@ -38,12 +38,16 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
         try:
             data = json.loads(body.decode("utf-8"))
-            received_webhooks.append({
-                "timestamp": datetime.now().isoformat(),
-                "path": self.path,
-                "data": data,
-            })
-            log(f"  [Webhook] Received: task={data.get('task_id', 'unknown')[:12]}... status={data.get('status', 'unknown')}")
+            received_webhooks.append(
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "path": self.path,
+                    "data": data,
+                }
+            )
+            log(
+                f"  [Webhook] Received: task={data.get('task_id', 'unknown')[:12]}... status={data.get('status', 'unknown')}"
+            )
         except json.JSONDecodeError:
             log(f"  [Webhook] Received non-JSON body: {body[:100]}")
 
@@ -94,18 +98,18 @@ def wait_for_service(base_url: str, timeout: int = 30) -> bool:
     start = time.time()
     while time.time() - start < timeout:
         try:
-            resp = httpx.get(f"{base_url}/health", timeout=5)
+            resp = requests.get(f"{base_url}/health", timeout=5)
             if resp.status_code == 200:
                 log("Service is healthy!")
                 return True
-        except httpx.RequestError:
+        except requests.RequestException:
             pass
         time.sleep(1)
     return False
 
 
 def upload_pdf(
-    client: httpx.Client,
+    client: requests.Session,
     base_url: str,
     pdf_path: Path,
     describe_images: bool = True,
@@ -135,7 +139,7 @@ def upload_pdf(
 
 
 def poll_task(
-    client: httpx.Client,
+    client: requests.Session,
     base_url: str,
     task_id: str,
     timeout: int = 300,
@@ -145,14 +149,17 @@ def poll_task(
     start = time.time()
 
     while time.time() - start < timeout:
-        resp = client.get(f"{base_url}/tasks/{task_id}", timeout=10)
-        data = resp.json()
-        status = data["status"]
+        try:
+            resp = client.get(f"{base_url}/tasks/{task_id}", timeout=30)
+            data = resp.json()
+            status = data["status"]
 
-        log(f"  Task {task_id[:12]}... status: {status}")
+            log(f"  Task {task_id[:12]}... status: {status}")
 
-        if status in ("completed", "failed", "expired"):
-            return data
+            if status in ("completed", "failed", "expired"):
+                return data
+        except requests.RequestException as e:
+            log(f"  Warning: RequestException while polling task {task_id}: {e}")
 
         time.sleep(poll_interval)
 
@@ -160,7 +167,7 @@ def poll_task(
 
 
 def download_outputs(
-    client: httpx.Client,
+    client: requests.Session,
     base_url: str,
     task_id: str,
     output_files: list[str],
@@ -189,7 +196,7 @@ def download_outputs(
 
 
 def test_pdf(
-    client: httpx.Client,
+    client: requests.Session,
     base_url: str,
     pdf_path: Path,
     output_dir: Path,
@@ -232,8 +239,11 @@ def test_pdf(
 
             # Download outputs
             result["downloaded_files"] = download_outputs(
-                client, base_url, task_info["task_id"],
-                result["output_files"], output_dir
+                client,
+                base_url,
+                task_info["task_id"],
+                result["output_files"],
+                output_dir,
             )
 
             # Get markdown preview
@@ -241,10 +251,14 @@ def test_pdf(
             if md_file in result["downloaded_files"]:
                 md_path = Path(result["downloaded_files"][md_file])
                 content = md_path.read_text(encoding="utf-8")
-                result["markdown_preview"] = content[:2000] + ("..." if len(content) > 2000 else "")
+                result["markdown_preview"] = content[:2000] + (
+                    "..." if len(content) > 2000 else ""
+                )
                 result["markdown_length"] = len(content)
 
-            log(f"  Completed in {result['duration_seconds']:.1f}s - {len(result['output_files'])} files")
+            log(
+                f"  Completed in {result['duration_seconds']:.1f}s - {len(result['output_files'])} files"
+            )
         else:
             result["error"] = final_status.get("error_message", "Unknown error")
             log(f"  Failed: {result['error']}")
@@ -258,7 +272,10 @@ def test_pdf(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="E2E test for markitdown-vision-service")
+    parser = argparse.ArgumentParser(
+        description="E2E test for markitdown-vision-service"
+    )
+    pwd = os.path.dirname(os.path.abspath(__file__))
     parser.add_argument(
         "--base-url",
         default="http://localhost:8000",
@@ -266,12 +283,12 @@ def main():
     )
     parser.add_argument(
         "--input-dir",
-        default="/home/frank/Workspaces/markitdown-vision-service/.claude/resources",
+        default=os.path.join(pwd, "examples"),
         help="Directory containing PDF files to test",
     )
     parser.add_argument(
         "--output-dir",
-        default="/home/frank/Workspaces/markitdown-vision-service/e2e_results",
+        default=os.path.join(pwd, "e2e_results"),
         help="Directory to save results",
     )
     parser.add_argument(
@@ -306,7 +323,9 @@ def main():
     log(f"Found {len(pdf_files)} PDF files to test")
     log(f"Output directory: {output_dir}")
     log(f"Image descriptions: {'disabled' if args.no_describe else 'enabled'}")
-    log(f"Webhook testing: {'port ' + str(args.webhook_port) if args.webhook_port else 'disabled'}")
+    log(
+        f"Webhook testing: {'port ' + str(args.webhook_port) if args.webhook_port else 'disabled'}"
+    )
     log("")
 
     # Start webhook server if requested
@@ -330,7 +349,7 @@ def main():
     # Test each PDF
     results = []
     try:
-        with httpx.Client() as client:
+        with requests.Session() as client:
             for i, pdf_path in enumerate(pdf_files, 1):
                 log(f"[{i}/{len(pdf_files)}] Testing {pdf_path.name}")
                 result = test_pdf(
@@ -364,7 +383,9 @@ def main():
         log("Successful conversions:")
         for r in successful:
             images = len([f for f in r["output_files"] if f.startswith("images/")])
-            log(f"  - {r['pdf_name']}: {r['duration_seconds']:.1f}s, {images} images, {r.get('markdown_length', 0)} chars")
+            log(
+                f"  - {r['pdf_name']}: {r['duration_seconds']:.1f}s, {images} images, {r.get('markdown_length', 0)} chars"
+            )
 
     if failed:
         log("")
@@ -390,7 +411,9 @@ def main():
                 log(f"  WARNING: Missing webhooks for {len(missing)} tasks")
 
     # Save results JSON
-    results_file = output_dir / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    results_file = (
+        output_dir / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    )
     output_data = {
         "results": results,
         "webhooks": received_webhooks if webhook_url else [],
@@ -409,7 +432,8 @@ def main():
     # Create index HTML for easy viewing
     index_html = output_dir / "index.html"
     with open(index_html, "w") as f:
-        f.write("""<!DOCTYPE html>
+        f.write(
+            """<!DOCTYPE html>
 <html>
 <head>
     <title>E2E Test Results</title>
@@ -426,7 +450,9 @@ def main():
 </head>
 <body>
     <h1>E2E Test Results</h1>
-    <p>Generated: """ + datetime.now().isoformat() + """</p>
+    <p>Generated: """
+            + datetime.now().isoformat()
+            + """</p>
     <table>
         <tr>
             <th>PDF</th>
@@ -435,31 +461,40 @@ def main():
             <th>Images</th>
             <th>Output</th>
         </tr>
-""")
+"""
+        )
         for r in results:
             status_class = "success" if r["success"] else "failure"
             status_text = "✓ Success" if r["success"] else f"✗ {r['error']}"
-            images = len([f for f in r.get("output_files", []) if f.startswith("images/")])
-            duration = f"{r['duration_seconds']:.1f}s" if r['duration_seconds'] else "N/A"
+            images = len(
+                [f for f in r.get("output_files", []) if f.startswith("images/")]
+            )
+            duration = (
+                f"{r['duration_seconds']:.1f}s" if r["duration_seconds"] else "N/A"
+            )
 
             output_link = ""
             if r["task_id"] and r["success"]:
                 md_path = f"{r['task_id']}/{r['task_id']}.md"
                 output_link = f'<a href="{md_path}">View Markdown</a>'
 
-            f.write(f"""        <tr>
+            f.write(
+                f"""        <tr>
             <td>{r['pdf_name']}<br><small>{r['pdf_size_bytes'] / 1024 / 1024:.2f} MB</small></td>
             <td class="{status_class}">{status_text}</td>
             <td>{duration}</td>
             <td>{images}</td>
             <td>{output_link}</td>
         </tr>
-""")
+"""
+            )
 
-        f.write("""    </table>
+        f.write(
+            """    </table>
 </body>
 </html>
-""")
+"""
+        )
 
     log(f"HTML index: {index_html}")
 
