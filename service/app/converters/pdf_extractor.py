@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import pdfplumber
 from PIL import Image
 from markitdown import MarkItDown, ExtractedImage
 
@@ -38,11 +39,18 @@ async def extract_pdf_with_images(
     """
     output_images_dir.mkdir(parents=True, exist_ok=True)
 
+    # Get total page count from PDF
+    with pdfplumber.open(pdf_path) as pdf:
+        total_pages = len(pdf.pages)
+
     # Use markitdown for text and image extraction
     logger.info(f"Extracting text and images from {pdf_path} using markitdown")
     md = MarkItDown()
     result = md.convert(str(pdf_path), extract_images=True, context_chars=context_chars)
     markdown_content = result.text_content
+
+    # Insert page locators
+    markdown_content = _insert_page_locators(markdown_content, total_pages)
 
     # Process extracted images
     image_refs: list[ImageRef] = []
@@ -132,6 +140,26 @@ def _save_extracted_image(
     except Exception as e:
         logger.warning(f"Failed to save image {extracted_img.image_id}: {e}")
         return None
+
+
+def _insert_page_locators(markdown_content: str, total_pages: int) -> str:
+    """Insert page locator HTML comments into markdown content."""
+    lines = markdown_content.split('\n')
+    result_lines: list[str] = []
+    current_page = 1
+
+    # Insert locator for page 1 at the top
+    result_lines.append(f'<!-- Page {current_page} / {total_pages} -->')
+
+    for line in lines:
+        result_lines.append(line)
+
+        # Detect page breaks (horizontal rules or form feeds)
+        if line.strip() in ('---', '***', '___') or '\f' in line:
+            current_page += 1
+            result_lines.append(f'<!-- Page {current_page} / {total_pages} -->')
+
+    return '\n'.join(result_lines)
 
 
 def _insert_image_references(
