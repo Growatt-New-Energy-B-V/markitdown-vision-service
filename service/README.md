@@ -34,7 +34,7 @@ A Dockerized Python service that converts documents to Markdown with optional LL
 ## Configuration
 
 Environment variables:
-- `OPENAI_API_TOKEN` - OpenAI API key for image descriptions
+- `OPENAI_API_KEY` - OpenAI API key for image descriptions
 - `DATA_DIR` - Data storage directory (default: `/data`)
 - `MAX_UPLOAD_SIZE` - Maximum upload size in bytes (default: 500MB)
 - `MAX_CONCURRENT_DESCRIPTIONS` - Max parallel OpenAI API calls for image descriptions (default: 5)
