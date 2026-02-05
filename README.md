@@ -210,7 +210,23 @@ for image in result.images:
 
 For production use cases, MarkItDown includes a Dockerized REST API service with async processing and LLM-powered image descriptions.
 
-**Quick Start:**
+**Quick Start (Docker Compose):**
+
+```bash
+# Run without image descriptions
+docker compose up -d
+
+# Run with OpenAI image descriptions
+OPENAI_API_KEY="sk-..." docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# Stop the service
+docker compose down
+```
+
+**Quick Start (Docker):**
 
 ```bash
 # Build the Docker image
@@ -220,7 +236,7 @@ docker build -t markitdown-vision-service .
 docker run -d -p 8000:8000 markitdown-vision-service
 
 # Run with OpenAI image descriptions
-docker run -d -p 8000:8000 -e OPENAI_API_TOKEN="sk-..." markitdown-vision-service
+docker run -d -p 8000:8000 -e OPENAI_API_KEY="sk-..." markitdown-vision-service
 ```
 
 **API Usage:**
