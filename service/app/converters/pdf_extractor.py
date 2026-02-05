@@ -156,8 +156,9 @@ def _insert_page_locators(markdown_content: str, total_pages: int) -> str:
 
         # Detect page breaks (horizontal rules or form feeds)
         if line.strip() in ('---', '***', '___') or '\f' in line:
-            current_page += 1
-            result_lines.append(f'<!-- Page {current_page} / {total_pages} -->')
+            if current_page < total_pages:
+                current_page += 1
+                result_lines.append(f'<!-- Page {current_page} / {total_pages} -->')
 
     return '\n'.join(result_lines)
 
