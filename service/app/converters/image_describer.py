@@ -1,4 +1,5 @@
 """LLM-powered image description with parallel processing and retry."""
+
 import asyncio
 import base64
 import logging
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 class DescriptionResult(NamedTuple):
     """Result of describing a single image."""
+
     ref: ImageRef
     description: str | None
     error: str | None
@@ -56,8 +58,7 @@ async def describe_images(
 
     # Process all images in parallel
     tasks = [
-        _describe_single_image(client, ref, images_dir, semaphore)
-        for ref in image_refs
+        _describe_single_image(client, ref, images_dir, semaphore) for ref in image_refs
     ]
     results: list[DescriptionResult] = await asyncio.gather(*tasks)
 
@@ -74,13 +75,15 @@ async def describe_images(
         else:
             description_block = _build_description_block(
                 result.ref,
-                f"description unavailable ({result.error or 'unknown error'})"
+                f"description unavailable ({result.error or 'unknown error'})",
             )
             error_count += 1
 
         markdown_content = markdown_content.replace(old_pattern, description_block)
 
-    logger.info(f"Image descriptions complete: {success_count} success, {error_count} failed")
+    logger.info(
+        f"Image descriptions complete: {success_count} success, {error_count} failed"
+    )
 
     return markdown_content
 
@@ -105,7 +108,7 @@ async def _describe_single_image(
             except RateLimitError as e:
                 last_error = f"rate limit: {e}"
                 # Longer wait for rate limits
-                wait_time = settings.description_retry_delay * (2 ** attempt) * 2
+                wait_time = settings.description_retry_delay * (2**attempt) * 2
                 logger.warning(
                     f"Rate limit for {ref.image_id}, "
                     f"retry {attempt + 1}/{settings.description_max_retries} "
@@ -115,7 +118,7 @@ async def _describe_single_image(
 
             except APIConnectionError as e:
                 last_error = f"connection error: {e}"
-                wait_time = settings.description_retry_delay * (2 ** attempt)
+                wait_time = settings.description_retry_delay * (2**attempt)
                 logger.warning(
                     f"Connection error for {ref.image_id}, "
                     f"retry {attempt + 1}/{settings.description_max_retries} "
@@ -129,7 +132,7 @@ async def _describe_single_image(
                 if e.status_code and 400 <= e.status_code < 500:
                     logger.error(f"Non-retryable API error for {ref.image_id}: {e}")
                     break
-                wait_time = settings.description_retry_delay * (2 ** attempt)
+                wait_time = settings.description_retry_delay * (2**attempt)
                 logger.warning(
                     f"API error for {ref.image_id}, "
                     f"retry {attempt + 1}/{settings.description_max_retries} "
@@ -145,14 +148,16 @@ async def _describe_single_image(
 
             except Exception as e:
                 last_error = str(e)[:100]
-                wait_time = settings.description_retry_delay * (2 ** attempt)
+                wait_time = settings.description_retry_delay * (2**attempt)
                 logger.warning(
                     f"Unexpected error for {ref.image_id}: {e}, "
                     f"retry {attempt + 1}/{settings.description_max_retries}"
                 )
                 await asyncio.sleep(wait_time)
 
-        logger.error(f"Failed to describe {ref.image_id} after all retries: {last_error}")
+        logger.error(
+            f"Failed to describe {ref.image_id} after all retries: {last_error}"
+        )
         return DescriptionResult(ref=ref, description=None, error=last_error)
 
 
