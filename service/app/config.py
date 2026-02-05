@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Database file path
     db_path: str = "/data/task_db.sqlite"
 
-    # OpenAI API token (note the intentional typo from PDR)
+    # OpenAI API token
     OPENAI_API_KEY: str = Field(default="", validation_alias="OPENAI_API_KEY")
 
     # Worker settings
