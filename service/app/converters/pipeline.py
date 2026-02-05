@@ -1,8 +1,7 @@
 """Document conversion pipeline."""
+
 import logging
-import re
 from pathlib import Path
-from typing import Optional
 
 from ..config import get_settings
 from ..models.task import Task
@@ -67,7 +66,5 @@ async def convert_document(task: Task) -> list[str]:
         for img_path in sorted(images_dir.iterdir()):
             output_files.append(f"images/{img_path.name}")
 
-    logger.info(
-        f"Task {task.task_id} converted: {len(output_files)} output files"
-    )
+    logger.info(f"Task {task.task_id} converted: {len(output_files)} output files")
     return output_files
