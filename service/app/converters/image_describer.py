@@ -37,14 +37,14 @@ async def describe_images(
     """
     settings = get_settings()
 
-    if not settings.openai_api_token:
+    if not settings.OPENAI_API_KEY:
         logger.warning("No OpenAI API token configured, skipping image descriptions")
         return markdown_content
 
     if not image_refs:
         return markdown_content
 
-    client = AsyncOpenAI(api_key=settings.openai_api_token)
+    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
     # Semaphore to limit concurrent API calls
     semaphore = asyncio.Semaphore(settings.max_concurrent_descriptions)
