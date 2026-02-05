@@ -103,6 +103,8 @@ def wait_for_service(base_url: str, timeout: int = 30) -> bool:
                 log("Service is healthy!")
                 return True
         except requests.RequestException:
+            # Transient connection/timeout error; service may not be ready yet.
+            # Ignore and keep retrying until the overall timeout is reached.
             pass
         time.sleep(1)
     return False
