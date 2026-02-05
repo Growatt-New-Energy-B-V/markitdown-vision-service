@@ -24,8 +24,12 @@ RUN pip --no-cache-dir install "/app/service[test]"
 # Copy test resources
 COPY .claude/resources /app/resources
 
-# Create data directory
-RUN mkdir -p /data/tasks && chmod 777 /data
+# Create non-root user and data directory
+RUN groupadd -g 1000 appuser && useradd -u 1000 -g 1000 -m appuser \
+    && mkdir -p /data/tasks \
+    && chown -R 1000:1000 /data /app
+
+USER 1000:1000
 
 # Expose the service port
 EXPOSE 8000
