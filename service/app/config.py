@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     # OpenAI API token
     OPENAI_API_KEY: str = Field(default="", validation_alias="OPENAI_API_KEY")
 
+    # OpenAI base URL override (for LLM gateway/proxy routing)
+    openai_base_url: str | None = None
+
+    # Vision model to use for image descriptions
+    openai_vision_model: str = "gpt-4o-mini"
+
     # Worker settings
     max_concurrent_tasks: int = 2
 

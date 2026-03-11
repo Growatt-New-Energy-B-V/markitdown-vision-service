@@ -46,7 +46,10 @@ async def describe_images(
     if not image_refs:
         return markdown_content
 
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    client_kwargs = {"api_key": settings.OPENAI_API_KEY}
+    if settings.openai_base_url:
+        client_kwargs["base_url"] = settings.openai_base_url
+    client = AsyncOpenAI(**client_kwargs)
 
     # Semaphore to limit concurrent API calls
     semaphore = asyncio.Semaphore(settings.max_concurrent_descriptions)
@@ -167,6 +170,7 @@ async def _get_image_description(
     images_dir: Path,
 ) -> str:
     """Get description for a single image using OpenAI Vision."""
+    settings = get_settings()
     image_path = images_dir / ref.filename
 
     if not image_path.exists():
@@ -200,7 +204,7 @@ For photos, describe the subject matter."""
 {context_prompt}Provide a clear, concise description of what the image shows."""
 
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=settings.openai_vision_model,
         messages=[
             {"role": "system", "content": system_prompt},
             {
