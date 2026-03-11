@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Database file path
     db_path: str = "/data/task_db.sqlite"
 
-    # OpenAI API token
+    # OpenAI API key
     OPENAI_API_KEY: str = Field(default="", validation_alias="OPENAI_API_KEY")
 
     # OpenAI base URL override (for LLM gateway/proxy routing)
