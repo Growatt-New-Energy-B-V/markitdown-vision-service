@@ -29,7 +29,7 @@ class TestOpenAIBaseUrl:
 
     def test_openai_base_url_default(self):
         """When OPENAI_BASE_URL is not set, setting is None (SDK default)."""
-        env = {"OPENAI_API_TOKEN": "sk-test"}
+        env = {"OPENAI_API_KEY": "sk-test"}
         with patch.dict(os.environ, env, clear=True):
             reset_settings()
             settings = Settings()
@@ -38,7 +38,7 @@ class TestOpenAIBaseUrl:
     def test_openai_base_url_configured(self):
         """When OPENAI_BASE_URL is set, setting holds that value."""
         env = {
-            "OPENAI_API_TOKEN": "sk-test",
+            "OPENAI_API_KEY": "sk-test",
             "OPENAI_BASE_URL": "http://llm-gateway:8100/v1",
         }
         with patch.dict(os.environ, env, clear=True):
@@ -51,35 +51,35 @@ class TestBaseUrlValidation:
     """Test URL validation on openai_base_url."""
 
     def test_accepts_http(self):
-        env = {"OPENAI_API_TOKEN": "sk-test", "OPENAI_BASE_URL": "http://gateway:8100/v1"}
+        env = {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "http://gateway:8100/v1"}
         with patch.dict(os.environ, env, clear=True):
             reset_settings()
             settings = Settings()
             assert settings.openai_base_url == "http://gateway:8100/v1"
 
     def test_accepts_https(self):
-        env = {"OPENAI_API_TOKEN": "sk-test", "OPENAI_BASE_URL": "https://gateway.example.com/v1"}
+        env = {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "https://gateway.example.com/v1"}
         with patch.dict(os.environ, env, clear=True):
             reset_settings()
             settings = Settings()
             assert settings.openai_base_url == "https://gateway.example.com/v1"
 
     def test_rejects_invalid_scheme(self):
-        env = {"OPENAI_API_TOKEN": "sk-test", "OPENAI_BASE_URL": "ftp://gateway:8100/v1"}
+        env = {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "ftp://gateway:8100/v1"}
         with patch.dict(os.environ, env, clear=True):
             reset_settings()
             with pytest.raises(ValidationError, match="openai_base_url must start with http:// or https://"):
                 Settings()
 
     def test_rejects_missing_scheme(self):
-        env = {"OPENAI_API_TOKEN": "sk-test", "OPENAI_BASE_URL": "gateway:8100/v1"}
+        env = {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "gateway:8100/v1"}
         with patch.dict(os.environ, env, clear=True):
             reset_settings()
             with pytest.raises(ValidationError, match="openai_base_url must start with http:// or https://"):
                 Settings()
 
     def test_accepts_none(self):
-        env = {"OPENAI_API_TOKEN": "sk-test"}
+        env = {"OPENAI_API_KEY": "sk-test"}
         with patch.dict(os.environ, env, clear=True):
             reset_settings()
             settings = Settings()
@@ -91,7 +91,7 @@ class TestVisionModel:
 
     def test_vision_model_default(self):
         """When OPENAI_VISION_MODEL is not set, defaults to gpt-4o-mini."""
-        env = {"OPENAI_API_TOKEN": "sk-test"}
+        env = {"OPENAI_API_KEY": "sk-test"}
         with patch.dict(os.environ, env, clear=True):
             reset_settings()
             settings = Settings()
@@ -100,7 +100,7 @@ class TestVisionModel:
     def test_vision_model_configured(self):
         """When OPENAI_VISION_MODEL is set, that model is used."""
         env = {
-            "OPENAI_API_TOKEN": "sk-test",
+            "OPENAI_API_KEY": "sk-test",
             "OPENAI_VISION_MODEL": "anthropic/claude-opus-4-6",
         }
         with patch.dict(os.environ, env, clear=True):
@@ -116,7 +116,7 @@ class TestClientConstructionWithBaseUrl:
     async def test_client_receives_base_url_when_configured(self):
         """When base_url is configured, AsyncOpenAI is constructed with it."""
         env = {
-            "OPENAI_API_TOKEN": "sk-test",
+            "OPENAI_API_KEY": "sk-test",
             "OPENAI_BASE_URL": "http://llm-gateway:8100/v1",
         }
         with patch.dict(os.environ, env, clear=True):
@@ -154,7 +154,7 @@ class TestClientConstructionWithBaseUrl:
     @pytest.mark.asyncio
     async def test_client_no_base_url_when_not_configured(self):
         """When base_url is not configured, AsyncOpenAI is called without it."""
-        env = {"OPENAI_API_TOKEN": "sk-test"}
+        env = {"OPENAI_API_KEY": "sk-test"}
         with patch.dict(os.environ, env, clear=True):
             reset_settings()
 
