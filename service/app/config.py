@@ -1,6 +1,6 @@
 """Application configuration."""
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,8 +21,21 @@ class Settings(BaseSettings):
     # Database file path
     db_path: str = "/data/task_db.sqlite"
 
-    # OpenAI API token
+    # OpenAI API key
     OPENAI_API_KEY: str = Field(default="", validation_alias="OPENAI_API_KEY")
+
+    # OpenAI base URL override (for LLM gateway/proxy routing)
+    openai_base_url: str | None = None
+
+    # Vision model to use for image descriptions
+    openai_vision_model: str = "gpt-4o-mini"
+
+    @field_validator("openai_base_url")
+    @classmethod
+    def validate_base_url(cls, v: str | None) -> str | None:
+        if v is not None and not v.startswith(("http://", "https://")):
+            raise ValueError("openai_base_url must start with http:// or https://")
+        return v
 
     # Worker settings
     max_concurrent_tasks: int = 2

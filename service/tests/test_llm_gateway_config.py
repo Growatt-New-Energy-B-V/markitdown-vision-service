@@ -1,0 +1,259 @@
+"""Tests for LLM gateway compatibility (configurable base_url and model)."""
+import os
+import sys
+import tempfile
+from pathlib import Path
+from unittest.mock import AsyncMock, patch, MagicMock
+
+import pytest
+from pydantic import ValidationError
+
+from app.config import Settings, reset_settings
+
+# Mock heavy dependencies that aren't installed in the test environment
+_module_mocks = {
+    "markitdown": MagicMock(),
+    "pdfplumber": MagicMock(),
+}
+
+
+@pytest.fixture(autouse=True)
+def _mock_heavy_deps():
+    """Mock markitdown/pdfplumber so app.converters can be imported."""
+    with patch.dict(sys.modules, _module_mocks):
+        yield
+
+
+class TestOpenAIBaseUrl:
+    """Test configurable OpenAI base URL."""
+
+    def test_openai_base_url_default(self):
+        """When OPENAI_BASE_URL is not set, setting is None (SDK default)."""
+        env = {"OPENAI_API_KEY": "sk-test"}
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+            settings = Settings()
+            assert settings.openai_base_url is None
+
+    def test_openai_base_url_configured(self):
+        """When OPENAI_BASE_URL is set, setting holds that value."""
+        env = {
+            "OPENAI_API_KEY": "sk-test",
+            "OPENAI_BASE_URL": "http://llm-gateway:8100/v1",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+            settings = Settings()
+            assert settings.openai_base_url == "http://llm-gateway:8100/v1"
+
+
+class TestBaseUrlValidation:
+    """Test URL validation on openai_base_url."""
+
+    def test_accepts_http(self):
+        env = {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "http://gateway:8100/v1"}
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+            settings = Settings()
+            assert settings.openai_base_url == "http://gateway:8100/v1"
+
+    def test_accepts_https(self):
+        env = {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "https://gateway.example.com/v1"}
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+            settings = Settings()
+            assert settings.openai_base_url == "https://gateway.example.com/v1"
+
+    def test_rejects_invalid_scheme(self):
+        env = {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "ftp://gateway:8100/v1"}
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+            with pytest.raises(ValidationError, match="openai_base_url must start with http:// or https://"):
+                Settings()
+
+    def test_rejects_missing_scheme(self):
+        env = {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "gateway:8100/v1"}
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+            with pytest.raises(ValidationError, match="openai_base_url must start with http:// or https://"):
+                Settings()
+
+    def test_accepts_none(self):
+        env = {"OPENAI_API_KEY": "sk-test"}
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+            settings = Settings()
+            assert settings.openai_base_url is None
+
+
+class TestVisionModel:
+    """Test configurable vision model."""
+
+    def test_vision_model_default(self):
+        """When OPENAI_VISION_MODEL is not set, defaults to gpt-4o-mini."""
+        env = {"OPENAI_API_KEY": "sk-test"}
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+            settings = Settings()
+            assert settings.openai_vision_model == "gpt-4o-mini"
+
+    def test_vision_model_configured(self):
+        """When OPENAI_VISION_MODEL is set, that model is used."""
+        env = {
+            "OPENAI_API_KEY": "sk-test",
+            "OPENAI_VISION_MODEL": "anthropic/claude-opus-4-6",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+            settings = Settings()
+            assert settings.openai_vision_model == "anthropic/claude-opus-4-6"
+
+
+class TestClientConstructionWithBaseUrl:
+    """Test that AsyncOpenAI client is constructed with base_url when configured."""
+
+    @pytest.mark.asyncio
+    async def test_client_receives_base_url_when_configured(self):
+        """When base_url is configured, AsyncOpenAI is constructed with it."""
+        env = {
+            "OPENAI_API_KEY": "sk-test",
+            "OPENAI_BASE_URL": "http://llm-gateway:8100/v1",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+
+            with patch("app.converters.image_describer.AsyncOpenAI") as mock_cls:
+                mock_client = MagicMock()
+                mock_cls.return_value = mock_client
+
+                from app.converters.image_describer import describe_images
+                from app.converters.pdf_extractor import ImageRef
+
+                ref = ImageRef(
+                    image_id="p1-i1",
+                    page=1,
+                    index=1,
+                    filename="test.png",
+                    context_before="",
+                    context_after="",
+                )
+
+                with patch("app.converters.image_describer._describe_single_image") as mock_desc:
+                    mock_desc.return_value = MagicMock(
+                        ref=ref, description="test", error=None
+                    )
+                    await describe_images(
+                        "![p1-i1](images/test.png)", [ref], Path("/tmp")
+                    )
+
+                mock_cls.assert_called_once_with(
+                    api_key="sk-test",
+                    base_url="http://llm-gateway:8100/v1",
+                )
+
+    @pytest.mark.asyncio
+    async def test_client_no_base_url_when_not_configured(self):
+        """When base_url is not configured, AsyncOpenAI is called without it."""
+        env = {"OPENAI_API_KEY": "sk-test"}
+        with patch.dict(os.environ, env, clear=True):
+            reset_settings()
+
+            with patch("app.converters.image_describer.AsyncOpenAI") as mock_cls:
+                mock_client = MagicMock()
+                mock_cls.return_value = mock_client
+
+                from app.converters.image_describer import describe_images
+                from app.converters.pdf_extractor import ImageRef
+
+                ref = ImageRef(
+                    image_id="p1-i1",
+                    page=1,
+                    index=1,
+                    filename="test.png",
+                    context_before="",
+                    context_after="",
+                )
+
+                with patch("app.converters.image_describer._describe_single_image") as mock_desc:
+                    mock_desc.return_value = MagicMock(
+                        ref=ref, description="test", error=None
+                    )
+                    await describe_images(
+                        "![p1-i1](images/test.png)", [ref], Path("/tmp")
+                    )
+
+                mock_cls.assert_called_once_with(api_key="sk-test")
+
+
+class TestModelUsedInAPICall:
+    """Test that the configured model is passed to the API call."""
+
+    @pytest.mark.asyncio
+    async def test_configured_model_used_in_api_call(self):
+        """When a custom model is passed, it is used in the API call."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "A test image"
+
+        mock_create = AsyncMock(return_value=mock_response)
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img_path = Path(tmpdir) / "test.png"
+            img_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+
+            from app.converters.image_describer import _get_image_description
+            from app.converters.pdf_extractor import ImageRef
+
+            ref = ImageRef(
+                image_id="p1-i1",
+                page=1,
+                index=1,
+                filename="test.png",
+                context_before="before",
+                context_after="after",
+            )
+
+            await _get_image_description(
+                mock_client, ref, Path(tmpdir), "anthropic/claude-opus-4-6"
+            )
+
+        mock_create.assert_called_once()
+        call_kwargs = mock_create.call_args.kwargs
+        assert call_kwargs["model"] == "anthropic/claude-opus-4-6"
+
+    @pytest.mark.asyncio
+    async def test_default_model_used_when_not_configured(self):
+        """When default model is passed, gpt-4o-mini is used."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "A test image"
+
+        mock_create = AsyncMock(return_value=mock_response)
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img_path = Path(tmpdir) / "test.png"
+            img_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+
+            from app.converters.image_describer import _get_image_description
+            from app.converters.pdf_extractor import ImageRef
+
+            ref = ImageRef(
+                image_id="p1-i1",
+                page=1,
+                index=1,
+                filename="test.png",
+                context_before="before",
+                context_after="after",
+            )
+
+            await _get_image_description(
+                mock_client, ref, Path(tmpdir), "gpt-4o-mini"
+            )
+
+        mock_create.assert_called_once()
+        call_kwargs = mock_create.call_args.kwargs
+        assert call_kwargs["model"] == "gpt-4o-mini"

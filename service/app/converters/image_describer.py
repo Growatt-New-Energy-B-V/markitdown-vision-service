@@ -46,7 +46,10 @@ async def describe_images(
     if not image_refs:
         return markdown_content
 
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    client_kwargs = {"api_key": settings.OPENAI_API_KEY}
+    if settings.openai_base_url:
+        client_kwargs["base_url"] = settings.openai_base_url
+    client = AsyncOpenAI(**client_kwargs)
 
     # Semaphore to limit concurrent API calls
     semaphore = asyncio.Semaphore(settings.max_concurrent_descriptions)
@@ -56,9 +59,12 @@ async def describe_images(
         f"(max {settings.max_concurrent_descriptions} concurrent)"
     )
 
+    model = settings.openai_vision_model
+
     # Process all images in parallel
     tasks = [
-        _describe_single_image(client, ref, images_dir, semaphore) for ref in image_refs
+        _describe_single_image(client, ref, images_dir, semaphore, model)
+        for ref in image_refs
     ]
     results: list[DescriptionResult] = await asyncio.gather(*tasks)
 
@@ -93,6 +99,7 @@ async def _describe_single_image(
     ref: ImageRef,
     images_dir: Path,
     semaphore: asyncio.Semaphore,
+    model: str,
 ) -> DescriptionResult:
     """Describe a single image with retry logic."""
     settings = get_settings()
@@ -102,7 +109,7 @@ async def _describe_single_image(
 
         for attempt in range(settings.description_max_retries):
             try:
-                description = await _get_image_description(client, ref, images_dir)
+                description = await _get_image_description(client, ref, images_dir, model)
                 return DescriptionResult(ref=ref, description=description, error=None)
 
             except RateLimitError as e:
@@ -165,6 +172,7 @@ async def _get_image_description(
     client: AsyncOpenAI,
     ref: ImageRef,
     images_dir: Path,
+    model: str,
 ) -> str:
     """Get description for a single image using OpenAI Vision."""
     image_path = images_dir / ref.filename
@@ -200,7 +208,7 @@ For photos, describe the subject matter."""
 {context_prompt}Provide a clear, concise description of what the image shows."""
 
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {
