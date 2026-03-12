@@ -1,6 +1,6 @@
 """Application configuration."""
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +29,13 @@ class Settings(BaseSettings):
 
     # Vision model to use for image descriptions
     openai_vision_model: str = "gpt-4o-mini"
+
+    @field_validator("openai_base_url")
+    @classmethod
+    def validate_base_url(cls, v: str | None) -> str | None:
+        if v is not None and not v.startswith(("http://", "https://")):
+            raise ValueError("openai_base_url must start with http:// or https://")
+        return v
 
     # Worker settings
     max_concurrent_tasks: int = 2

@@ -34,12 +34,17 @@ A Dockerized Python service that converts documents to Markdown with optional LL
 ## Configuration
 
 Environment variables:
-- `OPENAI_API_KEY` - OpenAI API key for image descriptions
-- `DATA_DIR` - Data storage directory (default: `/data`)
-- `MAX_UPLOAD_SIZE` - Maximum upload size in bytes (default: 500MB)
-- `MAX_CONCURRENT_DESCRIPTIONS` - Max parallel OpenAI API calls for image descriptions (default: 5)
-- `DESCRIPTION_MAX_RETRIES` - Retry attempts for failed image descriptions (default: 3)
-- `DESCRIPTION_RETRY_DELAY` - Base delay in seconds for exponential backoff (default: 1.0)
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `OPENAI_API_KEY` | OpenAI API key for image descriptions | `""` | Yes (for image descriptions) |
+| `OPENAI_BASE_URL` | Override OpenAI base URL (for LLM gateway/proxy routing) | None (uses OpenAI default) | No |
+| `OPENAI_VISION_MODEL` | Vision model for image descriptions | `gpt-4o-mini` | No |
+| `DATA_DIR` | Data storage directory | `/data` | No |
+| `MAX_UPLOAD_SIZE` | Maximum upload size in bytes | `524288000` (500MB) | No |
+| `MAX_CONCURRENT_DESCRIPTIONS` | Max parallel OpenAI API calls for image descriptions | `5` | No |
+| `DESCRIPTION_MAX_RETRIES` | Retry attempts for failed image descriptions | `3` | No |
+| `DESCRIPTION_RETRY_DELAY` | Base delay in seconds for exponential backoff | `1.0` | No |
 
 ## Running
 
