@@ -1,6 +1,7 @@
 import sys
 import io
 import re
+import statistics
 from typing import BinaryIO, Any
 
 from .._base_converter import DocumentConverter, DocumentConverterResult, ExtractedImage
@@ -9,6 +10,17 @@ from .._exceptions import MissingDependencyException, MISSING_DEPENDENCY_MESSAGE
 
 # Pattern for MasterFormat-style partial numbering (e.g., ".1", ".2", ".10")
 PARTIAL_NUMBERING_PATTERN = re.compile(r"^\.\d+$")
+
+# Heading detection thresholds (relative to body font size)
+_H1_RATIO = 1.8
+_H2_RATIO = 1.3
+_H3_RATIO = 1.1
+
+# Maximum line length for a line to be considered a heading candidate (chars)
+_MAX_HEADING_LINE_CHARS = 80
+
+# Y tolerance for grouping words into the same line (points)
+_LINE_Y_TOLERANCE = 3
 
 
 def _merge_partial_numbering_lines(text: str) -> str:
@@ -55,6 +67,242 @@ def _merge_partial_numbering_lines(text: str) -> str:
             i += 1
 
     return "\n".join(result_lines)
+
+
+def _compute_body_font_size(words: list[dict]) -> float | None:
+    """
+    Compute the body font size for a page by finding the mode of all font sizes.
+
+    The mode represents the most common font size, which is typically the body text.
+    Returns None if no font size information is available.
+
+    Args:
+        words: List of word dicts with 'size' key (from pdfplumber extract_words with
+               extra_attrs=["fontname", "size"])
+    """
+    sizes = [w.get("size") for w in words if w.get("size") is not None]
+    if not sizes:
+        return None
+
+    # Round sizes to nearest 0.5 to group visually identical sizes
+    rounded = [round(s * 2) / 2 for s in sizes]
+    # Find mode
+    try:
+        return statistics.mode(rounded)
+    except statistics.StatisticsError:
+        # No unique mode — use median
+        return statistics.median(rounded)
+
+
+def _group_words_into_lines(words: list[dict], page_height: float) -> list[dict]:
+    """
+    Group words into lines based on their Y-position.
+
+    Words within _LINE_Y_TOLERANCE points of each other are grouped into
+    the same line. Lines in the top 5% or bottom 5% of the page are flagged
+    as header/footer candidates (likely page numbers, running titles, etc.).
+
+    Args:
+        words: List of word dicts with 'top', 'text', 'fontname', 'size' keys
+        page_height: Total height of the page in points
+
+    Returns:
+        List of line dicts, each with:
+          - 'text': joined text of all words on the line
+          - 'words': list of word dicts
+          - 'y': representative Y position (top of first word)
+          - 'is_header_footer': True if in top/bottom 5% of page
+    """
+    if not words:
+        return []
+
+    # Sort words by Y position (top), then by X (x0)
+    sorted_words = sorted(words, key=lambda w: (round(w["top"] / _LINE_Y_TOLERANCE) * _LINE_Y_TOLERANCE, w.get("x0", 0)))
+
+    lines: list[dict] = []
+    current_line_words: list[dict] = []
+    current_y_key: float | None = None
+
+    for word in sorted_words:
+        y_key = round(word["top"] / _LINE_Y_TOLERANCE) * _LINE_Y_TOLERANCE
+        if current_y_key is None or abs(y_key - current_y_key) <= _LINE_Y_TOLERANCE * 2:
+            current_line_words.append(word)
+            if current_y_key is None:
+                current_y_key = y_key
+        else:
+            if current_line_words:
+                lines.append(_build_line(current_line_words, page_height))
+            current_line_words = [word]
+            current_y_key = y_key
+
+    if current_line_words:
+        lines.append(_build_line(current_line_words, page_height))
+
+    return lines
+
+
+def _build_line(words: list[dict], page_height: float) -> dict:
+    """Build a line dict from a list of words."""
+    # Sort words by X position
+    sorted_words = sorted(words, key=lambda w: w.get("x0", 0))
+    text = " ".join(w["text"] for w in sorted_words if w.get("text", "").strip())
+
+    y_pos = sorted_words[0].get("top", 0)
+    margin = page_height * 0.05  # 5% margin
+
+    return {
+        "text": text,
+        "words": sorted_words,
+        "y": y_pos,
+        "is_header_footer": y_pos < margin or y_pos > page_height - margin,
+    }
+
+
+def _classify_line_as_heading(line: dict, body_font_size: float) -> str | None:
+    """
+    Classify a line as a heading level or None (body text).
+
+    Classification rules:
+    - Skip header/footer lines
+    - Skip lines longer than _MAX_HEADING_LINE_CHARS
+    - H1: line_font_size >= body_font_size * _H1_RATIO
+    - H2: line_font_size >= body_font_size * _H2_RATIO
+    - H3: line_font_size >= body_font_size * _H3_RATIO AND font is bold
+
+    Additional signals (confirm, not detect on their own):
+    - Line is short (< _MAX_HEADING_LINE_CHARS chars) — already enforced
+    - Font name contains "Bold" or "Heavy"
+
+    Args:
+        line: Line dict from _group_words_into_lines
+        body_font_size: Most common font size on the page
+
+    Returns:
+        "#", "##", "###", or None
+    """
+    # Skip header/footer lines
+    if line["is_header_footer"]:
+        return None
+
+    text = line["text"].strip()
+    if not text:
+        return None
+
+    # Skip lines that are too long to be headings
+    if len(text) > _MAX_HEADING_LINE_CHARS:
+        return None
+
+    # Compute line font size as median of word sizes
+    word_sizes = [w.get("size") for w in line["words"] if w.get("size") is not None]
+    if not word_sizes:
+        return None
+
+    line_font_size = statistics.median(word_sizes)
+
+    # Check if any word in the line has a bold font
+    has_bold = any(
+        "Bold" in (w.get("fontname") or "") or "Heavy" in (w.get("fontname") or "")
+        for w in line["words"]
+        if w.get("fontname")
+    )
+
+    # Classify based on size thresholds
+    if line_font_size >= body_font_size * _H1_RATIO:
+        return "#"
+    elif line_font_size >= body_font_size * _H2_RATIO:
+        return "##"
+    elif line_font_size >= body_font_size * _H3_RATIO and has_bold:
+        return "###"
+
+    return None
+
+
+def _extract_text_with_headings(page: Any) -> str | None:
+    """
+    Extract text from a PDF page with font-based heading detection.
+
+    Uses pdfplumber's word-level font metadata to identify headings:
+    - Computes body font size as the mode of all font sizes on the page
+    - Groups words into lines by Y-position
+    - Classifies lines as H1/H2/H3 based on size relative to body
+    - Merges consecutive heading lines with the same prefix
+    - Filters page header/footer regions (top/bottom 5%)
+
+    Returns None if:
+    - No words extracted (scanned PDF — caller should use pdfminer)
+    - No font size metadata available (older PDFs)
+
+    Args:
+        page: A pdfplumber Page object
+
+    Returns:
+        Markdown text with heading prefixes, or None to signal fallback
+    """
+    try:
+        words = page.extract_words(extra_attrs=["fontname", "size"], keep_blank_chars=True, x_tolerance=3, y_tolerance=3)
+    except Exception:
+        return None
+
+    if not words:
+        return None
+
+    # Compute body font size
+    body_font_size = _compute_body_font_size(words)
+    if body_font_size is None or body_font_size <= 0:
+        # No font info — extract plain text without headings
+        text = page.extract_text()
+        return text.strip() if text else None
+
+    # Group words into lines
+    page_height = getattr(page, "height", 792) or 792
+    lines = _group_words_into_lines(words, page_height)
+
+    if not lines:
+        return None
+
+    # Classify each line and build output
+    result_parts: list[str] = []
+    prev_heading_prefix: str | None = None
+    prev_heading_text: str | None = None
+
+    for line in lines:
+        text = line["text"].strip()
+        if not text:
+            # Flush any accumulated heading
+            if prev_heading_text is not None:
+                result_parts.append(f"{prev_heading_prefix} {prev_heading_text}")
+                prev_heading_prefix = None
+                prev_heading_text = None
+            continue
+
+        heading_prefix = _classify_line_as_heading(line, body_font_size)
+
+        if heading_prefix is not None:
+            # Merge consecutive lines with same heading level (multi-line headings)
+            if prev_heading_prefix == heading_prefix:
+                prev_heading_text = f"{prev_heading_text} {text}"
+            else:
+                # Flush previous heading if any
+                if prev_heading_text is not None:
+                    result_parts.append(f"{prev_heading_prefix} {prev_heading_text}")
+                prev_heading_prefix = heading_prefix
+                prev_heading_text = text
+        else:
+            # Flush pending heading before body text
+            if prev_heading_text is not None:
+                result_parts.append(f"{prev_heading_prefix} {prev_heading_text}")
+                prev_heading_prefix = None
+                prev_heading_text = None
+
+            # Skip header/footer body lines (don't add them)
+            if not line["is_header_footer"]:
+                result_parts.append(text)
+
+    # Flush final pending heading
+    if prev_heading_text is not None:
+        result_parts.append(f"{prev_heading_prefix} {prev_heading_text}")
+
+    return "\n".join(result_parts) if result_parts else None
 
 
 # Load dependencies
@@ -589,31 +837,24 @@ class PdfConverter(DocumentConverter):
         pdf_bytes = io.BytesIO(file_stream.read())
 
         try:
-            # Track how many pages are form-style vs plain text
-            form_pages = 0
-            plain_pages = 0
             page_texts: list[str] = []  # Store text per page for context extraction
 
             with pdfplumber.open(pdf_bytes) as pdf:
                 for page_num, page in enumerate(pdf.pages, start=1):
-                    # Try form-style word position extraction
+                    # Try form-style word position extraction first
                     page_content = _extract_form_content_from_words(page)
 
-                    # If extraction returns None, this page is not form-style
-                    if page_content is None:
-                        plain_pages += 1
-                        # Extract text using pdfplumber's basic extraction for this page
-                        text = page.extract_text()
-                        page_text = text.strip() if text else ""
-                        if page_text:
-                            markdown_chunks.append(page_text)
-                        page_texts.append(page_text)
-                    else:
-                        form_pages += 1
+                    if page_content is not None:
+                        # Form-style page: use structured extraction result as-is
                         page_text = page_content.strip()
-                        if page_text:
-                            markdown_chunks.append(page_text)
-                        page_texts.append(page_text)
+                    else:
+                        # Plain-text page: use font-aware heading detection
+                        page_content_with_headings = _extract_text_with_headings(page)
+                        page_text = page_content_with_headings.strip() if page_content_with_headings else ""
+
+                    if page_text:
+                        markdown_chunks.append(page_text)
+                    page_texts.append(page_text)
 
                     # Extract images from this page if requested
                     if extract_images:
@@ -623,21 +864,16 @@ class PdfConverter(DocumentConverter):
                         )
                         all_images.extend(page_images)
 
-            # If most pages are plain text, use pdfminer for better text handling
-            if plain_pages > form_pages and plain_pages > 0:
-                pdf_bytes.seek(0)
-                markdown = pdfminer.high_level.extract_text(pdf_bytes)
-            else:
-                # Build markdown from chunks
-                markdown = "\n\n".join(markdown_chunks).strip()
+            # Build markdown from pdfplumber chunks
+            markdown = "\n\n".join(markdown_chunks).strip()
 
         except Exception:
-            # Fallback if pdfplumber fails
+            # Fallback if pdfplumber fails entirely — no heading detection possible
             pdf_bytes.seek(0)
             markdown = pdfminer.high_level.extract_text(pdf_bytes)
             all_images = []  # Cannot extract images with fallback
 
-        # Fallback if still empty
+        # Fallback if still empty — use pdfminer (no heading detection on this path)
         if not markdown:
             pdf_bytes.seek(0)
             markdown = pdfminer.high_level.extract_text(pdf_bytes)
